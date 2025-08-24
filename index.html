@@ -1,0 +1,384 @@
+<!--|
+Game: Lane Runner 
+Level: `Night Drive`
+Controls: ← / A  |  → / D  |  Tap lane to move | Space = Pause
+Goal: Dodge cars, stay alive, rack up score
+Coder: MS1 
+|-->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Lane Runner — Night Drive</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+      }
+      #wrap {
+        display: grid;
+        place-items: center;
+        height: 100%;
+      }
+      canvas {
+        display: block;
+        background: #000;
+        touch-action: none;
+        image-rendering: pixelated;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas
+        id="game"
+        width="480"
+        height="720"
+      ></canvas>
+    </div>
+
+    <script>
+      ;(() => {
+        // ===== Config =====
+        const W = 480,
+          H = 720
+        const LANES = 3,
+          ROAD_MARGIN = 60,
+          ROAD_TOP = 120
+        const CAR_W = 60,
+          CAR_H = 90,
+          CAR_Y = H - 150
+        const BASE_SPEED = 6,
+          DASH_LEN = 40,
+          DASH_GAP = 40
+
+        // ===== Colors =====
+        const SKY_TOP = "#02030a",
+          SKY_BOT = "#060a1b",
+          STAR_COL = "#9bb0ff"
+        const CITY_DARK = "#0b1537",
+          CITY_LIGHT = "#3b61ff"
+        const ROAD_BASE = "#0a0f22",
+          ROAD_EDGE = "#0e1633",
+          LINE_COL = "#e6e6e6"
+        const CAR_COL = "#39d0ff",
+          UI_COL = "#9bb0ff",
+          OB_COL = "#ff5d8f"
+
+        const cvs = document.getElementById("game")
+        const ctx = cvs.getContext("2d")
+
+        // ===== Lanes: Math =====
+        const roadLeft = ROAD_MARGIN,
+          roadRight = W - ROAD_MARGIN
+        const laneWidth = (roadRight - roadLeft) / LANES
+        const laneX = (i) => Math.round(roadLeft + laneWidth * (i + 0.5))
+
+        // ===== Game State =====
+        let running = true,
+          gameOver = false,
+          score = 0,
+          speed = BASE_SPEED
+        let dashOffset = 0,
+          spawnTick = 0,
+          cityOffset = 0
+        const player = {
+          lane: 1,
+          x: laneX(1),
+          y: CAR_Y,
+          targetLane: 1,
+          lerpT: 1,
+        }
+        const obstacles = []
+
+        // ===== Background: Stars =====
+        const stars = Array.from({ length: 80 }, () => ({
+          x: Math.random() * W,
+          y: Math.random() * ROAD_TOP * 0.9,
+          tw: Math.random() * Math.PI * 2,
+          sp: 0.02 + Math.random() * 0.04,
+        }))
+
+        // ===== Utilitiez =====
+        const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
+        const lerp = (a, b, t) => a + (b - a) * t
+        const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3)
+
+        function roundRect(c, x, y, w, h, r, col) {
+          c.fillStyle = col
+          c.beginPath()
+          c.moveTo(x + r, y)
+          c.arcTo(x + w, y, x + w, y + h, r)
+          c.arcTo(x + w, y + h, x, y + h, r)
+          c.arcTo(x, y + h, x, y, r)
+          c.arcTo(x, y, x + w, y, r)
+          c.closePath()
+          c.fill()
+        }
+
+        // ===== Input: Keys =====
+        addEventListener("keydown", (e) => {
+          if (gameOver && (e.code === "Enter" || e.code === "NumpadEnter"))
+            return restart()
+          if (e.code === "Space") {
+            running = !running
+            return
+          }
+          if (!running || gameOver) return
+          if (e.code === "ArrowLeft" || e.key === "a" || e.key === "A") move(-1)
+          if (e.code === "ArrowRight" || e.key === "d" || e.key === "D")
+            move(+1)
+        })
+
+        cvs.addEventListener("pointerdown", (e) => {
+          if (gameOver) return restart()
+          if (!running) {
+            running = true
+            return
+          }
+          const r = cvs.getBoundingClientRect(),
+            x = e.clientX - r.left
+          const lane = clamp(
+            Math.floor((x - roadLeft) / laneWidth),
+            0,
+            LANES - 1
+          )
+          player.targetLane = lane
+          player.lerpT = 0
+        })
+
+        function move(dir) {
+          player.targetLane = clamp(player.targetLane + dir, 0, LANES - 1)
+          player.lerpT = 0
+        }
+
+        // ===== Spawn/Respawn & Update =====
+        function spawnObstacle() {
+          const lane = (Math.random() * LANES) | 0
+          const w = CAR_W * 0.9,
+            h = CAR_H * 0.9
+          obstacles.push({
+            lane,
+            x: laneX(lane) - w / 2,
+            y: ROAD_TOP - h - 20,
+            w,
+            h,
+            vy: speed + Math.random() * 2,
+          })
+        }
+
+        function updateObstacles(dt) {
+          spawnTick += dt * 16.6667
+          const interval = Math.max(380, 900 - Math.min(450, (score * 3) | 0))
+          if (spawnTick >= interval) {
+            spawnTick = 0
+            spawnObstacle()
+          }
+          for (const o of obstacles) o.y += o.vy * dt
+          while (obstacles.length && obstacles[0].y > H + 20) obstacles.shift()
+          for (const o of obstacles) {
+            if (o.lane !== player.lane) continue
+            const px = player.x - CAR_W / 2,
+              py = player.y - CAR_H / 2
+            if (
+              !(
+                px > o.x + o.w ||
+                px + CAR_W < o.x ||
+                py > o.y + o.h ||
+                py + CAR_H < o.y
+              )
+            ) {
+              endGame()
+              break
+            }
+          }
+        }
+
+        function endGame() {
+          gameOver = true
+          running = false
+        }
+        function restart() {
+          obstacles.length = 0
+          score = 0
+          speed = BASE_SPEED
+          dashOffset = 0
+          spawnTick = 0
+          cityOffset = 0
+          player.lane = 1
+          player.targetLane = 1
+          player.lerpT = 1
+          player.x = laneX(1)
+          gameOver = false
+          running = true
+        }
+
+        // ===== Draw Skyline/City/Road =====
+        function drawSky() {
+          const g = ctx.createLinearGradient(0, 0, 0, ROAD_TOP)
+          g.addColorStop(0, SKY_TOP)
+          g.addColorStop(1, SKY_BOT)
+          ctx.fillStyle = g
+          ctx.fillRect(0, 0, W, ROAD_TOP)
+          for (const s of stars) {
+            s.tw += s.sp
+            const a = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(s.tw))
+            ctx.globalAlpha = a
+            ctx.fillStyle = STAR_COL
+            ctx.fillRect(s.x | 0, s.y | 0, 2, 2)
+          }
+          ctx.globalAlpha = 1
+        }
+
+        function drawCity() {
+          const baseY = ROAD_TOP - 6
+          for (let i = 0; i < 18; i++) {
+            const w = 10 + ((i * 13) % 28),
+              h = 20 + ((i * 17) % 60),
+              x = 10 + i * 26
+            ctx.fillStyle = CITY_DARK
+            ctx.fillRect(x, baseY - h, w, h)
+            ctx.fillStyle = CITY_LIGHT
+            for (let wy = baseY - h + 4; wy < baseY - 4; wy += 8) {
+              for (let wx = x + 3; wx < x + w - 3; wx += 8) {
+                if (((wx + wy) >> 0) % 3 === 0) ctx.fillRect(wx, wy, 2, 2)
+              }
+            }
+          }
+        }
+
+        function drawRoad() {
+          ctx.save()
+          ctx.beginPath()
+          ctx.rect(roadLeft, ROAD_TOP, roadRight - roadLeft, H - ROAD_TOP)
+          ctx.clip()
+          const g = ctx.createLinearGradient(roadLeft, 0, roadRight, 0)
+          g.addColorStop(0, ROAD_EDGE)
+          g.addColorStop(0.5, ROAD_BASE)
+          g.addColorStop(1, ROAD_EDGE)
+          ctx.fillStyle = g
+          ctx.fillRect(roadLeft, ROAD_TOP, roadRight - roadLeft, H - ROAD_TOP)
+          ctx.globalAlpha = 0.06
+          for (let y = ROAD_TOP; y < H; y += 6) {
+            ctx.fillStyle = (y / 6) % 2 ? "#0b132b" : "#0a1126"
+            ctx.fillRect(roadLeft, y, roadRight - roadLeft, 3)
+          }
+          ctx.globalAlpha = 1
+          ctx.fillStyle = LINE_COL
+          for (let line = 1; line < LANES; line++) {
+            const x = roadLeft + laneWidth * line
+            let y = ROAD_TOP + (dashOffset % (DASH_LEN + DASH_GAP))
+            for (; y < H; y += DASH_LEN + DASH_GAP) {
+              const scale = 0.6 + 0.4 * ((y - ROAD_TOP) / (H - ROAD_TOP))
+              ctx.fillRect(x - 2, y, 4, Math.max(10, DASH_LEN * scale))
+            }
+          }
+          ctx.fillRect(roadLeft - 3, ROAD_TOP, 3, H - ROAD_TOP)
+          ctx.fillRect(roadRight, ROAD_TOP, 3, H - ROAD_TOP)
+          ctx.restore()
+        }
+
+        // ===== Draw Car/Obstacles =====
+        function drawCar() {
+          if (player.lerpT < 1) {
+            player.lerpT = Math.min(1, player.lerpT + 0.18)
+            player.x = lerp(
+              laneX(player.lane),
+              laneX(player.targetLane),
+              easeOutCubic(player.lerpT)
+            )
+            if (player.lerpT === 1) player.lane = player.targetLane
+          } else player.x = laneX(player.lane)
+          roundRect(
+            ctx,
+            player.x - CAR_W / 2,
+            player.y - CAR_H / 2,
+            CAR_W,
+            CAR_H,
+            10,
+            CAR_COL
+          )
+          ctx.fillStyle = "#b8f1ff"
+          ctx.fillRect(
+            player.x - CAR_W * 0.35,
+            player.y - CAR_H * 0.3,
+            CAR_W * 0.7,
+            CAR_H * 0.26
+          )
+          ctx.fillStyle = "#0fe3ff"
+          ctx.fillRect(
+            player.x - CAR_W * 0.3,
+            player.y - CAR_H * 0.05,
+            CAR_W * 0.6,
+            CAR_H * 0.1
+          )
+        }
+
+        function drawObstacles() {
+          for (const o of obstacles)
+            roundRect(ctx, o.x, o.y, o.w, o.h, 8, OB_COL)
+        }
+
+        function drawHUD() {
+          ctx.fillStyle = "#000814"
+          ctx.fillRect(0, 0, W, 70)
+          ctx.fillStyle = UI_COL
+          ctx.font = "700 18px ui-sans-serif,system-ui"
+          ctx.fillText("Lane Runner", 16, 24)
+          ctx.font = "600 14px ui-sans-serif,system-ui"
+          ctx.fillText("←/A  move  →/D · tap lane · Space pause", 16, 48)
+          ctx.textAlign = "right"
+          ctx.fillText(
+            `Score: ${Math.floor(score).toString().padStart(5, "0")}`,
+            W - 16,
+            24
+          )
+          ctx.textAlign = "left"
+        }
+
+        // ===== Loopty Loops =====
+        let last = 0
+        function tick(ts) {
+          const dt = last ? (ts - last) / 16.6667 : 1
+          last = ts
+          if (running && !gameOver) {
+            score += 0.8 * dt
+            dashOffset += speed * dt
+            cityOffset += 0.25 * dt
+            speed = Math.min(14, BASE_SPEED + score * 0.01)
+            updateObstacles(dt)
+          }
+          ctx.clearRect(0, 0, W, H)
+          drawSky()
+          drawCity()
+          drawRoad()
+          drawObstacles()
+          drawCar()
+          drawHUD()
+          if (gameOver) {
+            ctx.fillStyle = "rgba(0,0,0,0.55)"
+            ctx.fillRect(0, 0, W, H)
+            ctx.fillStyle = "#fff"
+            ctx.font = "800 36px ui-sans-serif,system-ui"
+            ctx.textAlign = "center"
+            ctx.fillText("GAME OVER", W / 2, H / 2 - 20)
+            ctx.font = "600 18px ui-sans-serif,system-ui"
+            ctx.fillText(`Score: ${Math.floor(score)}`, W / 2, H / 2 + 12)
+            ctx.fillText("Press Enter or Tap to Restart", W / 2, H / 2 + 44)
+            ctx.textAlign = "left"
+          }
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })()
+    </script>
+  </body>
+</html>
+//-ms1
