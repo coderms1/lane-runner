@@ -1,6 +1,7 @@
 # 🏎️💨 Lane Runner Game
 
-🎮 🎮 🎮 🎮 🎮 🎮 🎮 🎮
+ 🎮 🎮 🎮 🎮 🎮 🎮 🎮 🎮
+-----------------------------
 `An arcade-style lane dodging game where you swerve through night traffic and chase high scores.`
 
 ## How to Play
@@ -24,3 +25,10 @@
 -index.html
 -README.md
 -(that's all... for now!)
+
+## About
+
+- Plans to improve and expand game using a web3 token system to create a play-to-earn style game.
+- STAY TUNED!
+
+- MS1
